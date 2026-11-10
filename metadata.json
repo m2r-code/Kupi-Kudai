@@ -1,0 +1,6 @@
+{
+  "name": "Kupikudai — Menu Digital & Pemesanan",
+  "description": "Menu digital interaktif kedai kopi Kupikudai Bogor dengan akses QR meja, pemesanan WhatsApp, pembayaran digital QRIS, manajemen stok & harga real-time, analitik menu terlaris bulanan, dan push notifikasi promo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
