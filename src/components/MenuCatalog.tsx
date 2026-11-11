@@ -254,12 +254,12 @@ export function MenuCatalog({
                 <button
                   type="button"
                   onClick={() => openDetailModal(item)}
-                  className="relative aspect-[4/3] w-full overflow-hidden bg-[#E9E6D3] p-4 text-left focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-[#1E4D31]"
+                  className="relative aspect-[4/3] w-full overflow-hidden bg-[#E9E6D3] p-2 text-left focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-[#1E4D31]"
                 >
                   <MenuImage
                     src={item.image}
                     alt={item.name}
-                    className={`h-full w-full transition-transform duration-200 group-hover:scale-[1.03] ${
+                    className={`h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.03] ${
                       isOutOfStock ? 'grayscale' : ''
                     }`}
                   />

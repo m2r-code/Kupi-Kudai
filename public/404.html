@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kupikudai — Menu Digital</title>
+    <script>
+      // Single Page Application redirect for GitHub Pages project sites
+      var path = window.location.pathname;
+      var repo = '/Kupi-Kudai/';
+      if (path.indexOf(repo) === 0) {
+        var subpath = path.slice(repo.length);
+        window.location.replace(repo + (subpath ? '#' + subpath : '') + window.location.search);
+      } else {
+        window.location.replace('./' + window.location.search);
+      }
+    </script>
+  </head>
+  <body style="background-color: #f7f5ef; font-family: sans-serif; text-align: center; padding: 40px; color: #1a241c;">
+    <h2>Mengalihkan ke Menu Digital Kupikudai...</h2>
+    <p><a href="./" style="color: #1e4d31; font-weight: bold;">Klik di sini jika halaman tidak berpindah otomatis</a></p>
+  </body>
+</html>

@@ -76,13 +76,32 @@ export default function App() {
   const [inboxOpen, setInboxOpen] = useState(false);
   const [liveToast, setLiveToast] = useState<PushNotificationEntry | null>(null);
 
-  // Initial Data Load
+  // Initial Data Load (Resilient for both full-stack Node server and static GitHub Pages)
   useEffect(() => {
     let mounted = true;
+
+    // Load from localStorage if user previously made local edits
+    try {
+      const cached = localStorage.getItem('kk_store_db');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && Array.isArray(parsed.menu) && parsed.menu.length > 0) {
+          setMenu(parsed.menu);
+          if (parsed.promos) setPromos(parsed.promos);
+          if (parsed.notifications) setNotifications(parsed.notifications);
+          if (parsed.orders) setOrders(parsed.orders);
+          if (parsed.monthlyAnalytics) setMonthlyAnalytics(parsed.monthlyAnalytics);
+          if (parsed.settings) setSettings(parsed.settings);
+        }
+      }
+    } catch {
+      // Ignored
+    }
+
     async function bootstrap() {
       try {
         const res = await fetch('/api/bootstrap');
-        if (!res.ok) throw new Error('Bootstrap error');
+        if (!res.ok) throw new Error('Static/offline environment');
         const data = await res.json();
         if (!mounted) return;
         setMenu(data.menu);
@@ -91,8 +110,13 @@ export default function App() {
         setOrders(data.orders);
         setMonthlyAnalytics(data.monthlyAnalytics);
         setSettings(data.settings);
+        try {
+          localStorage.setItem('kk_store_db', JSON.stringify(data));
+        } catch {
+          // Ignored
+        }
       } catch (err) {
-        console.warn('Using initial seed fallback:', err);
+        console.info('Kupikudai: Berjalan dalam mode client-side standalone / GitHub Pages:', err);
       } finally {
         if (mounted) setIsLoading(false);
       }
@@ -103,82 +127,95 @@ export default function App() {
     };
   }, []);
 
-  // Real-time Server-Sent Events subscription
+  // Real-time Server-Sent Events subscription (guarded for static GitHub Pages)
   useEffect(() => {
-    const source = new EventSource('/api/events');
-
-    source.addEventListener('connected', () => {
+    if (typeof window !== 'undefined' && window.location.hostname.endsWith('github.io')) {
+      // On static GitHub Pages, activate standalone mode
       setSseConnected(true);
-    });
+      return;
+    }
 
-    source.addEventListener('menu_updated', (ev) => {
-      const updated = JSON.parse((ev as MessageEvent).data) as MenuItem;
-      setMenu((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
-    });
+    let source: EventSource | null = null;
+    try {
+      source = new EventSource('/api/events');
 
-    source.addEventListener('menu_created', (ev) => {
-      const created = JSON.parse((ev as MessageEvent).data) as MenuItem;
-      setMenu((prev) => {
-        if (prev.some((m) => m.id === created.id)) return prev;
-        return [created, ...prev];
+      source.addEventListener('connected', () => {
+        setSseConnected(true);
       });
-    });
 
-    source.addEventListener('order_created', (ev) => {
-      const created = JSON.parse((ev as MessageEvent).data) as OrderRecord;
-      setOrders((prev) => {
-        if (prev.some((o) => o.id === created.id)) return prev;
-        return [created, ...prev];
+      source.addEventListener('menu_updated', (ev) => {
+        const updated = JSON.parse((ev as MessageEvent).data) as MenuItem;
+        setMenu((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       });
-    });
 
-    source.addEventListener('order_updated', (ev) => {
-      const updated = JSON.parse((ev as MessageEvent).data) as OrderRecord;
-      setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
-    });
+      source.addEventListener('menu_created', (ev) => {
+        const created = JSON.parse((ev as MessageEvent).data) as MenuItem;
+        setMenu((prev) => {
+          if (prev.some((m) => m.id === created.id)) return prev;
+          return [created, ...prev];
+        });
+      });
 
-    source.addEventListener('analytics_updated', (ev) => {
-      const nextAnalytics = JSON.parse((ev as MessageEvent).data) as MonthlyAnalyticsBucket[];
-      setMonthlyAnalytics(nextAnalytics);
-    });
+      source.addEventListener('order_created', (ev) => {
+        const created = JSON.parse((ev as MessageEvent).data) as OrderRecord;
+        setOrders((prev) => {
+          if (prev.some((o) => o.id === created.id)) return prev;
+          return [created, ...prev];
+        });
+      });
 
-    source.addEventListener('promo_updated', (ev) => {
-      const nextPromos = JSON.parse((ev as MessageEvent).data) as PromoCampaign[];
-      setPromos(nextPromos);
-    });
+      source.addEventListener('order_updated', (ev) => {
+        const updated = JSON.parse((ev as MessageEvent).data) as OrderRecord;
+        setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+      });
 
-    source.addEventListener('promo_push', (ev) => {
-      const notif = JSON.parse((ev as MessageEvent).data) as PushNotificationEntry;
-      setNotifications((prev) => [notif, ...prev.filter((n) => n.id !== notif.id)].slice(0, 20));
-      setUnreadNotifCount((c) => c + 1);
-      setLiveToast(notif);
+      source.addEventListener('analytics_updated', (ev) => {
+        const nextAnalytics = JSON.parse((ev as MessageEvent).data) as MonthlyAnalyticsBucket[];
+        setMonthlyAnalytics(nextAnalytics);
+      });
 
-      if (
-        typeof window !== 'undefined' &&
-        'Notification' in window &&
-        window.Notification.permission === 'granted'
-      ) {
-        try {
-          new window.Notification(`Kupikudai · ${notif.title}`, {
-            body: `${notif.message} (Kode: ${notif.code})`,
-          });
-        } catch {
-          // Ignore browser restrictions inside sandboxed iframes
+      source.addEventListener('promo_updated', (ev) => {
+        const nextPromos = JSON.parse((ev as MessageEvent).data) as PromoCampaign[];
+        setPromos(nextPromos);
+      });
+
+      source.addEventListener('promo_push', (ev) => {
+        const notif = JSON.parse((ev as MessageEvent).data) as PushNotificationEntry;
+        setNotifications((prev) => [notif, ...prev.filter((n) => n.id !== notif.id)].slice(0, 20));
+        setUnreadNotifCount((c) => c + 1);
+        setLiveToast(notif);
+
+        if (
+          typeof window !== 'undefined' &&
+          'Notification' in window &&
+          window.Notification.permission === 'granted'
+        ) {
+          try {
+            new window.Notification(`Kupikudai · ${notif.title}`, {
+              body: `${notif.message} (Kode: ${notif.code})`,
+            });
+          } catch {
+            // Ignore browser restrictions inside sandboxed iframes
+          }
         }
-      }
-    });
+      });
 
-    source.addEventListener('settings_updated', (ev) => {
-      const nextSettings = JSON.parse((ev as MessageEvent).data) as StoreSettings;
-      setSettings(nextSettings);
-    });
+      source.addEventListener('settings_updated', (ev) => {
+        const nextSettings = JSON.parse((ev as MessageEvent).data) as StoreSettings;
+        setSettings(nextSettings);
+      });
 
-    source.onerror = () => {
+      source.onerror = () => {
+        setSseConnected(false);
+        // If static hosting, close immediately to avoid 404 spam
+        source?.close();
+      };
+    } catch {
       setSseConnected(false);
-    };
+    }
 
     return () => {
-      source.close();
+      source?.close();
     };
   }, []);
 
@@ -260,7 +297,28 @@ export default function App() {
     }
   }, [notifications]);
 
-  // API Mutations
+  // Save state to localStorage whenever modified to persist changes in static/GitHub Pages mode
+  useEffect(() => {
+    if (!isLoading) {
+      try {
+        localStorage.setItem(
+          'kk_store_db',
+          JSON.stringify({
+            menu,
+            promos,
+            notifications,
+            orders,
+            monthlyAnalytics,
+            settings,
+          }),
+        );
+      } catch {
+        // LocalStorage quota or disabled
+      }
+    }
+  }, [menu, promos, notifications, orders, monthlyAnalytics, settings, isLoading]);
+
+  // API Mutations (with resilient fallback for static GitHub Pages)
   const handleSubmitOrder = useCallback(
     async (payload: {
       customerName: string;
@@ -277,30 +335,75 @@ export default function App() {
       paymentReference: string;
       notes?: string;
     }): Promise<OrderRecord> => {
-      const res = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Gagal menyimpan pesanan');
+      try {
+        const res = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return data as OrderRecord;
+        }
+      } catch {
+        // Fallback for static hosting (GitHub Pages)
       }
-      return data as OrderRecord;
+
+      // Standalone client-side creation for GitHub Pages
+      const now = new Date();
+      const localOrder: OrderRecord = {
+        id: `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        createdAt: now.toISOString(),
+        monthKey: now.toISOString().slice(0, 7),
+        orderStatus: 'Menunggu',
+        ...payload,
+      };
+
+      // Decrement stock in local state
+      setMenu((prev) =>
+        prev.map((item) => {
+          const ordered = payload.items.find((i) => i.menuId === item.id);
+          if (ordered) {
+            const nextStock = Math.max(0, item.stock - ordered.quantity);
+            return { ...item, stock: nextStock, available: nextStock > 0 };
+          }
+          return item;
+        }),
+      );
+
+      setOrders((prev) => [localOrder, ...prev]);
+      return localOrder;
     },
     [],
   );
 
   const handleUpdateMenuItem = useCallback(async (id: string, patch: Partial<MenuItem>) => {
-    const res = await fetch(`/api/menu/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    if (res.ok) {
-      const updated = (await res.json()) as MenuItem;
-      setMenu((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+    try {
+      const res = await fetch(`/api/menu/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (res.ok) {
+        const updated = (await res.json()) as MenuItem;
+        setMenu((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+        return;
+      }
+    } catch {
+      // Fallback
     }
+    setMenu((prev) =>
+      prev.map((m) => {
+        if (m.id === id) {
+          const merged = { ...m, ...patch };
+          if (typeof patch.stock === 'number') {
+            merged.available = patch.stock > 0;
+          }
+          return merged;
+        }
+        return m;
+      }),
+    );
   }, []);
 
   const handleAddMenuItem = useCallback(
@@ -310,19 +413,38 @@ export default function App() {
       description: string;
       price: number;
       stock: number;
+      image?: string;
     }) => {
-      const res = await fetch('/api/menu', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(item),
-      });
-      if (res.ok) {
-        const created = (await res.json()) as MenuItem;
-        setMenu((prev) => {
-          if (prev.some((m) => m.id === created.id)) return prev;
-          return [created, ...prev];
+      try {
+        const res = await fetch('/api/menu', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(item),
         });
+        if (res.ok) {
+          const created = (await res.json()) as MenuItem;
+          setMenu((prev) => {
+            if (prev.some((m) => m.id === created.id)) return prev;
+            return [created, ...prev];
+          });
+          return;
+        }
+      } catch {
+        // Fallback
       }
+
+      const newItem: MenuItem = {
+        id: `custom_${Date.now()}`,
+        name: item.name,
+        category: item.category,
+        description: item.description,
+        price: item.price,
+        stock: item.stock,
+        available: item.stock > 0,
+        image: item.image || '/images/menu/kupi-susu-kudai.jpg',
+        isRecommended: false,
+      };
+      setMenu((prev) => [newItem, ...prev]);
     },
     [],
   );
@@ -337,60 +459,134 @@ export default function App() {
       minOrder: number;
       targetCategory: MenuCategory | 'Semua Menu';
     }) => {
-      const res = await fetch('/api/promos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(promo),
-      });
-      if (res.ok) {
-        const created = (await res.json()) as PromoCampaign;
-        setPromos((prev) => [created, ...prev.filter((p) => p.id !== created.id)]);
+      try {
+        const res = await fetch('/api/promos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(promo),
+        });
+        if (res.ok) {
+          const created = (await res.json()) as PromoCampaign;
+          setPromos((prev) => [created, ...prev.filter((p) => p.id !== created.id)]);
+          return;
+        }
+      } catch {
+        // Fallback
       }
+
+      const newPromo: PromoCampaign = {
+        id: `promo_${Date.now()}`,
+        active: true,
+        pushCount: 0,
+        ...promo,
+      };
+      setPromos((prev) => [newPromo, ...prev.filter((p) => p.id !== newPromo.id)]);
     },
     [],
   );
 
   const handleTogglePromo = useCallback(async (id: string, active: boolean) => {
-    const res = await fetch(`/api/promos/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ active }),
-    });
-    if (res.ok) {
-      const updated = (await res.json()) as PromoCampaign;
-      setPromos((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    try {
+      const res = await fetch(`/api/promos/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active }),
+      });
+      if (res.ok) {
+        const updated = (await res.json()) as PromoCampaign;
+        setPromos((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+        return;
+      }
+    } catch {
+      // Fallback
     }
+    setPromos((prev) => prev.map((p) => (p.id === id ? { ...p, active } : p)));
   }, []);
 
-  const handlePushPromo = useCallback(async (id: string) => {
-    await fetch(`/api/promos/${id}/push`, { method: 'POST' });
-  }, []);
+  const handlePushPromo = useCallback(
+    async (id: string) => {
+      try {
+        await fetch(`/api/promos/${id}/push`, { method: 'POST' });
+      } catch {
+        // Fallback for static hosting
+      }
+
+      const targetPromo = promos.find((p) => p.id === id);
+      if (targetPromo) {
+        const discountSummary =
+          targetPromo.discountType === 'percent'
+            ? `${targetPromo.discountValue}%`
+            : `Rp ${targetPromo.discountValue.toLocaleString('id-ID')}`;
+
+        const notif: PushNotificationEntry = {
+          id: `push_${Date.now()}`,
+          promoId: targetPromo.id,
+          title: targetPromo.title,
+          message: targetPromo.message,
+          code: targetPromo.code,
+          targetCategory: targetPromo.targetCategory,
+          discountSummary,
+          sentAt: new Date().toISOString(),
+        };
+        setNotifications((prev) => [notif, ...prev.filter((n) => n.id !== notif.id)].slice(0, 20));
+        setUnreadNotifCount((c) => c + 1);
+        setLiveToast(notif);
+
+        if (
+          typeof window !== 'undefined' &&
+          'Notification' in window &&
+          window.Notification.permission === 'granted'
+        ) {
+          try {
+            new window.Notification(`Kupikudai · ${notif.title}`, {
+              body: `${notif.message} (Kode: ${notif.code})`,
+            });
+          } catch {
+            // Ignored
+          }
+        }
+      }
+    },
+    [promos],
+  );
 
   const handleUpdateOrderStatus = useCallback(
     async (id: string, patch: { orderStatus?: OrderStatus; paymentStatus?: 'pending' | 'paid' }) => {
-      const res = await fetch(`/api/orders/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
-      if (res.ok) {
-        const updated = (await res.json()) as OrderRecord;
-        setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+      try {
+        const res = await fetch(`/api/orders/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        if (res.ok) {
+          const updated = (await res.json()) as OrderRecord;
+          setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+          return;
+        }
+      } catch {
+        // Fallback
       }
+      setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
     },
     [],
   );
 
   const handleUpdateSettings = useCallback(async (patch: Partial<StoreSettings>) => {
-    const res = await fetch('/api/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    if (res.ok) {
-      const updated = (await res.json()) as StoreSettings;
-      setSettings(updated);
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (res.ok) {
+        const updated = (await res.json()) as StoreSettings;
+        setSettings(updated);
+        return;
+      }
+    } catch {
+      // Fallback
     }
+    setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
 
   const handleTableChange = (nextTable: string) => {

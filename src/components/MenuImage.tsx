@@ -11,6 +11,17 @@ interface MenuImageProps {
 export function MenuImage({ src, alt, className = '', variant = 'dish' }: MenuImageProps) {
   const [hasError, setHasError] = useState(false);
 
+  // Dynamically resolve image paths to work on GitHub Pages subpaths, custom domains, and local dev
+  const resolveSrc = (url: string) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
+      return url;
+    }
+    const clean = url.replace(/^\.?\//, '');
+    const base = import.meta.env.BASE_URL || './';
+    return `${base.replace(/\/$/, '')}/${clean}`;
+  };
+
   if (hasError || !src) {
     return (
       <div
@@ -24,7 +35,7 @@ export function MenuImage({ src, alt, className = '', variant = 'dish' }: MenuIm
 
   return (
     <img
-      src={src}
+      src={resolveSrc(src)}
       alt={alt}
       referrerPolicy="no-referrer"
       onError={() => setHasError(true)}
